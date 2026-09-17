@@ -15,7 +15,7 @@ const mainKeyboard = new Keyboard()
   .text('⚙️ Изменить город / время')
   .resized();
 
-// Генерация рекомендаций по одежде для конкретной температуры и условий
+// Генерация рекомендаций по одежде
 function getOutfitRecommendation(temp, feelsLike, precipitation, windSpeed) {
   let recommendation = '';
 
@@ -44,12 +44,16 @@ function getOutfitRecommendation(temp, feelsLike, precipitation, windSpeed) {
   return recommendation;
 }
 
-// Запрос почасовой погоды от Open-Meteo
+// Запрос почасовой погоды от Open-Meteo с заголовком User-Agent
 async function getWeatherForecast(lat, lon) {
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,apparent_temperature,precipitation_probability,wind_speed_10m&forecast_days=1&timezone=auto`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Weather API error');
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'WeatherWardrobeBot/1.0 (https://github.com)'
+      }
+    });
+    if (!response.ok) throw new Error(`Weather API error: ${response.status}`);
     return await response.json();
   } catch (error) {
     console.error('Ошибка получения погоды:', error);
@@ -61,7 +65,11 @@ async function getWeatherForecast(lat, lon) {
 async function geocodeCity(cityName) {
   try {
     const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=ru`;
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'WeatherWardrobeBot/1.0 (https://github.com)'
+      }
+    });
     const data = await response.json();
 
     if (!data.results || data.results.length === 0) return null;
@@ -254,5 +262,5 @@ cron.schedule('* * * * *', async () => {
 });
 
 bot.start({
-  onStart: () => console.log('🤖 Бот "Погода & Гардероб" успешно перезапущен с поддержкой периодов дня!')
+  onStart: () => console.log('🤖 Бот "Погода & Гардероб" успешно перезапущен!')
 });
