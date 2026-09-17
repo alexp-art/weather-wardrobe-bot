@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import http from 'http';
 
 dotenv.config();
 
@@ -236,6 +237,15 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+// Простой заглушечный HTTP-сервер для удовлетворения проверок Render
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot is running online!');
+}).listen(PORT, () => {
+  console.log(`Веб-сервер запущен на порту ${PORT}`);
+});
+
 bot.start({
-  onStart: () => console.log('🤖 Бот успешно запущен на WeatherAPI!')
+  onStart: () => console.log('🤖 Бот успешно запущен и слушаeт запросы!')
 });
