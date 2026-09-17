@@ -46,15 +46,20 @@ function getOutfitRecommendation(temp, feelsLike, precipitation, windSpeed) {
 
 // Запрос прогноза через WeatherAPI
 async function getWeatherForecast(cityName) {
+  const apiKey = process.env.WEATHER_API_KEY;
+  
+  if (!apiKey) {
+    return { error: 'Переменная WEATHER_API_KEY не найдена в настройках Render.' };
+  }
+
   try {
-    const apiKey = process.env.WEATHER_API_KEY;
-    const url = `https://api.weatherapi.com/v1/forecast.json?key=${apiKey}&q=${encodeURIComponent(cityName)}&days=1&aqi=no&alerts=no&lang=ru`;
-    
+    const url = `https://api.weatherapi.com/v1/forecast.json?key=${apiKey.trim()}&q=${encodeURIComponent(cityName)}&days=1&aqi=no&alerts=no&lang=ru`;
     const response = await axios.get(url, { timeout: 10000 });
-    return response.data;
+    return { data: response.data };
   } catch (error) {
-    console.error('Ошибка WeatherAPI:', error.message);
-    return null;
+    console.error('Ошибка WeatherAPI:', error.response?.data || error.message);
+    const msg = error.response?.data?.error?.message || error.message;
+    return { error: `Ошибка API Погоды: ${msg}` };
   }
 }
 
@@ -72,11 +77,13 @@ function parseHourData(hourObj) {
 }
 
 async function generateWeatherReport(user) {
-  const data = await getWeatherForecast(user.city_name);
-  if (!data || !data.forecast) {
-    return '⚠️ Сервис погоды временно недоступен, попробуйте чуть позже.';
+  const result = await getWeatherForecast(user.city_name);
+  
+  if (result.error) {
+    return `⚠️ ${result.error}`;
   }
 
+  const data = result.data;
   const hours = data.forecast.forecastday[0].hour;
 
   const morning = parseHourData(hours[8]);
@@ -140,11 +147,13 @@ bot.on('message:text', async (ctx) => {
   }
 
   if (state.step === 'WAITING_CITY') {
-    const weatherData = await getWeatherForecast(text);
+    const weatherResult = await getWeatherForecast(text);
 
-    if (!weatherData || !weatherData.location) {
-      return ctx.reply('❌ Город не найден. Пожалуйста, проверьте написание и введите снова:');
+    if (weatherResult.error || !weatherResult.data?.location) {
+      return ctx.reply(`❌ Не удалось найти город. Причина: ${weatherResult.error || 'Город не найден'}`);
     }
+
+    const weatherData = weatherResult.data;
 
     userState.set(chatId, {
       step: 'WAITING_TIME',
@@ -183,7 +192,7 @@ bot.on('message:text', async (ctx) => {
 
     if (error) {
       console.error('Ошибка Supabase:', error);
-      return ctx.reply('Произошла ошибка при сохранении данных. Попробуйте снова.');
+      return ctx.reply('Произошла ошибка при сохранении данных.');
     }
 
     userState.delete(chatId);
@@ -228,5 +237,5 @@ cron.schedule('* * * * *', async () => {
 });
 
 bot.start({
-  onStart: () => console.log('🤖 Бот переведен на WeatherAPI и готов к работе!')
+  onStart: () => console.log('🤖 Бот успешно запущен на WeatherAPI!')
 });
