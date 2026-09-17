@@ -1,15 +1,13 @@
 {
   "name": "weather-wardrobe-bot",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "main": "index.js",
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
-    "dotenv": "^16.4.5",
-    "grammy": "^1.30.0",
+    "@supabase/supabase-js": "^2.48.0",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.35.0",
     "node-cron": "^3.0.3"
   }
 }
