@@ -3,8 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import http from 'http';
-import https from 'https';
 
 dotenv.config();
 
@@ -12,16 +10,6 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const bot = new Bot(process.env.BOT_TOKEN);
 
 const userState = new Map();
-
-// Клиент axios с принудительным IPv4 (family: 4)
-const apiClient = axios.create({
-  timeout: 10000,
-  headers: {
-    'User-Agent': 'WeatherWardrobeBot/1.0'
-  },
-  httpAgent: new http.Agent({ family: 4 }),
-  httpsAgent: new https.Agent({ family: 4 })
-});
 
 const mainKeyboard = new Keyboard()
   .text('🌤 Погода сейчас')
@@ -56,75 +44,55 @@ function getOutfitRecommendation(temp, feelsLike, precipitation, windSpeed) {
   return recommendation;
 }
 
-async function getWeatherForecast(lat, lon) {
+// Запрос прогноза через WeatherAPI
+async function getWeatherForecast(cityName) {
   try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,apparent_temperature,precipitation_probability,wind_speed_10m&forecast_days=1&timezone=auto`;
-    const response = await apiClient.get(url);
+    const apiKey = process.env.WEATHER_API_KEY;
+    const url = `https://api.weatherapi.com/v1/forecast.json?key=${apiKey}&q=${encodeURIComponent(cityName)}&days=1&aqi=no&alerts=no&lang=ru`;
+    
+    const response = await axios.get(url, { timeout: 10000 });
     return response.data;
   } catch (error) {
-    console.error('Ошибка получения погоды:', error.message);
+    console.error('Ошибка WeatherAPI:', error.message);
     return null;
   }
 }
 
-async function geocodeCity(cityName) {
-  try {
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=ru`;
-    const response = await apiClient.get(url);
-    
-    if (!response.data.results || response.data.results.length === 0) return null;
+function parseHourData(hourObj) {
+  const temp = Math.round(hourObj.temp_c);
+  const feelsLike = Math.round(hourObj.feelslike_c);
+  const precip = hourObj.chance_of_rain || 0;
+  const wind = Math.round(hourObj.wind_kph / 3.6);
 
-    const city = response.data.results[0];
-    return {
-      name: city.name,
-      lat: city.latitude,
-      lon: city.longitude,
-      timezone: city.timezone || 'UTC'
-    };
-  } catch (error) {
-    console.error('Ошибка геокодинга:', error.message);
-    return null;
-  }
-}
-
-function getHourData(hourly, hour) {
-  const temp = Math.round(hourly.temperature_2m[hour]);
-  const feelsLike = Math.round(hourly.apparent_temperature[hour]);
-  const precip = hourly.precipitation_probability[hour] || 0;
-  const wind = hourly.wind_speed_10m[hour];
-  
   return {
     temp,
     feelsLike,
-    precip,
-    wind,
     outfit: getOutfitRecommendation(temp, feelsLike, precip, wind)
   };
 }
 
 async function generateWeatherReport(user) {
-  const forecast = await getWeatherForecast(user.latitude, user.longitude);
-  if (!forecast || !forecast.hourly) {
+  const data = await getWeatherForecast(user.city_name);
+  if (!data || !data.forecast) {
     return '⚠️ Сервис погоды временно недоступен, попробуйте чуть позже.';
   }
 
-  const h = forecast.hourly;
+  const hours = data.forecast.forecastday[0].hour;
 
-  const morning = getHourData(h, 8);
-  const day = getHourData(h, 14);
-  const evening = getHourData(h, 19);
-  const night = getHourData(h, 23);
+  const morning = parseHourData(hours[8]);
+  const day = parseHourData(hours[14]);
+  const evening = parseHourData(hours[19]);
+  const night = parseHourData(hours[23]);
 
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('ru-RU', {
-    timeZone: user.timezone,
+  const dateStr = new Date().toLocaleDateString('ru-RU', {
+    timeZone: user.timezone || 'UTC',
     day: 'numeric',
     month: 'long',
     weekday: 'short'
   });
 
   return (
-    `📍 *${user.city_name}* — Прогноз на сегодня (${dateStr})\n\n` +
+    `📍 *${data.location.name}* — Прогноз на сегодня (${dateStr})\n\n` +
     
     `🌅 *Утро (08:00):* ${morning.temp}°C (ощущается ${morning.feelsLike}°C)\n` +
     `💡 ${morning.outfit}\n\n` +
@@ -172,19 +140,24 @@ bot.on('message:text', async (ctx) => {
   }
 
   if (state.step === 'WAITING_CITY') {
-    const geoData = await geocodeCity(text);
+    const weatherData = await getWeatherForecast(text);
 
-    if (!geoData) {
+    if (!weatherData || !weatherData.location) {
       return ctx.reply('❌ Город не найден. Пожалуйста, проверьте написание и введите снова:');
     }
 
     userState.set(chatId, {
       step: 'WAITING_TIME',
-      cityData: geoData
+      cityData: {
+        name: weatherData.location.name,
+        lat: weatherData.location.lat,
+        lon: weatherData.location.lon,
+        timezone: weatherData.location.tz_id
+      }
     });
 
     return ctx.reply(
-      `Город *${geoData.name}* найден! ✅\n\n` +
+      `Город *${weatherData.location.name}* найден! ✅\n\n` +
       `Теперь введите время для ежедневного утреннего отчета в формате *ЧЧ:ММ* (например, \`07:30\`):`,
       { parse_mode: 'Markdown' }
     );
@@ -255,5 +228,5 @@ cron.schedule('* * * * *', async () => {
 });
 
 bot.start({
-  onStart: () => console.log('🤖 Бот "Погода & Гардероб" успешно перезапущен с IPv4!')
+  onStart: () => console.log('🤖 Бот переведен на WeatherAPI и готов к работе!')
 });
