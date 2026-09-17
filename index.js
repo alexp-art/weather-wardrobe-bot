@@ -2,6 +2,9 @@ import { Bot, Keyboard } from 'grammy';
 import { createClient } from '@supabase/supabase-js';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
+import axios from 'axios';
+import http from 'http';
+import https from 'https';
 
 dotenv.config();
 
@@ -10,12 +13,21 @@ const bot = new Bot(process.env.BOT_TOKEN);
 
 const userState = new Map();
 
+// Клиент axios с принудительным IPv4 (family: 4)
+const apiClient = axios.create({
+  timeout: 10000,
+  headers: {
+    'User-Agent': 'WeatherWardrobeBot/1.0'
+  },
+  httpAgent: new http.Agent({ family: 4 }),
+  httpsAgent: new https.Agent({ family: 4 })
+});
+
 const mainKeyboard = new Keyboard()
   .text('🌤 Погода сейчас')
   .text('⚙️ Изменить город / время')
   .resized();
 
-// Генерация рекомендаций по одежде
 function getOutfitRecommendation(temp, feelsLike, precipitation, windSpeed) {
   let recommendation = '';
 
@@ -44,37 +56,25 @@ function getOutfitRecommendation(temp, feelsLike, precipitation, windSpeed) {
   return recommendation;
 }
 
-// Запрос почасовой погоды от Open-Meteo с заголовком User-Agent
 async function getWeatherForecast(lat, lon) {
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,apparent_temperature,precipitation_probability,wind_speed_10m&forecast_days=1&timezone=auto`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'WeatherWardrobeBot/1.0 (https://github.com)'
-      }
-    });
-    if (!response.ok) throw new Error(`Weather API error: ${response.status}`);
-    return await response.json();
+    const response = await apiClient.get(url);
+    return response.data;
   } catch (error) {
-    console.error('Ошибка получения погоды:', error);
+    console.error('Ошибка получения погоды:', error.message);
     return null;
   }
 }
 
-// Поиск координат и часового пояса
 async function geocodeCity(cityName) {
   try {
     const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=ru`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'WeatherWardrobeBot/1.0 (https://github.com)'
-      }
-    });
-    const data = await response.json();
+    const response = await apiClient.get(url);
+    
+    if (!response.data.results || response.data.results.length === 0) return null;
 
-    if (!data.results || data.results.length === 0) return null;
-
-    const city = data.results[0];
+    const city = response.data.results[0];
     return {
       name: city.name,
       lat: city.latitude,
@@ -82,12 +82,11 @@ async function geocodeCity(cityName) {
       timezone: city.timezone || 'UTC'
     };
   } catch (error) {
-    console.error('Ошибка геокодинга:', error);
+    console.error('Ошибка геокодинга:', error.message);
     return null;
   }
 }
 
-// Извлечение данных для конкретного часа из почасового массива
 function getHourData(hourly, hour) {
   const temp = Math.round(hourly.temperature_2m[hour]);
   const feelsLike = Math.round(hourly.apparent_temperature[hour]);
@@ -103,7 +102,6 @@ function getHourData(hourly, hour) {
   };
 }
 
-// Формирование подробного отчета по периодам суток
 async function generateWeatherReport(user) {
   const forecast = await getWeatherForecast(user.latitude, user.longitude);
   if (!forecast || !forecast.hourly) {
@@ -112,7 +110,6 @@ async function generateWeatherReport(user) {
 
   const h = forecast.hourly;
 
-  // Индексы часов: Утро (08:00), День (14:00), Вечер (19:00), Ночь (23:00)
   const morning = getHourData(h, 8);
   const day = getHourData(h, 14);
   const evening = getHourData(h, 19);
@@ -143,15 +140,12 @@ async function generateWeatherReport(user) {
   );
 }
 
-// --- ОБРАБОТЧИКИ СООБЩЕНИЙ ---
-
 bot.command('start', async (ctx) => {
   const chatId = ctx.chat.id;
   userState.set(chatId, { step: 'WAITING_CITY' });
 
   await ctx.reply(
     'Привет! 👋 Я бот «Погода & Гардероб 24/7».\n\n' +
-    'Я буду присылать тебе удобный прогноз погоды на весь день (Утро, День, Вечер, Ночь) и подбирать гардероб под каждый период.\n\n' +
     'Введи название своего города (например, *Москва* или *Тирасполь*):',
     { parse_mode: 'Markdown' }
   );
@@ -231,7 +225,6 @@ bot.on('message:text', async (ctx) => {
   }
 });
 
-// Крон-рассылка
 cron.schedule('* * * * *', async () => {
   try {
     const { data: users, error } = await supabase.from('users').select('*');
@@ -262,5 +255,5 @@ cron.schedule('* * * * *', async () => {
 });
 
 bot.start({
-  onStart: () => console.log('🤖 Бот "Погода & Гардероб" успешно перезапущен!')
+  onStart: () => console.log('🤖 Бот "Погода & Гардероб" успешно перезапущен с IPv4!')
 });
